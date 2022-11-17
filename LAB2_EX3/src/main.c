@@ -48,7 +48,7 @@ void READ_FROM_CHILD(void){
    //read a message sent by child from pipe
    close(pipefd2[1]);
    read(pipefd2[0], readMessage, sizeof(readMessage));
-   printf("Parents receive message from child! <<-- %s\n", readMessage); 
+   printf("Parent receives message from child! <<-- %s\n", readMessage);
 }
 
 
