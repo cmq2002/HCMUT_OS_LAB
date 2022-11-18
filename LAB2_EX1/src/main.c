@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/wait.h>
 
 #define SHM_KEY1 0x123
 #define SHM_KEY2 0x124
@@ -19,10 +20,8 @@
 char dashLine[BUFFER_SIZE] = "----------------------------------------------------------";
 
 typedef struct{
-    int userID;
     int movieID;
     int rate;
-    int time;
 } filmSurvey;
 
 typedef struct{
@@ -30,28 +29,23 @@ typedef struct{
     float avgPoint[NUM_MOVIES];
 } ratingPoint;
 
-void seperateStr(char *str, int *userID, int *movieID, int *rate, int *time){
+void seperateStr(char *str, int *movieID, int *rate){
     char *token = strtok(str, DELIM);
-    *userID = atoi(token);
     token = strtok(NULL, DELIM);
     *movieID = atoi(token);
     token = strtok(NULL, DELIM);
     *rate = atoi(token);
-    token = strtok(NULL, DELIM);
-    *time = atoi(token);
 }
 
 void readFile(char *filename, filmSurvey *data, int *elementsNum){
     FILE *fptr = fopen(filename, "r");
-    char line[BUFFER_SIZE] = "";
-    int buffer[4] = {0, 0, 0, 0};
-    while(fgets(line,sizeof(line),fptr)){
-        seperateStr(line, &buffer[0], &buffer[1], &buffer[2], &buffer[3]);
-        data[*elementsNum].userID = buffer[0];
-        data[*elementsNum].movieID = buffer[1];
-        data[*elementsNum].rate = buffer[2];
-        data[*elementsNum].time = buffer[3];
-        *elementsNum++;
+    char line[BUFFER_SIZE];
+    int buffer[2] = {0, 0};
+    while(fgets(line,sizeof(line),fptr) != NULL){
+        seperateStr(line, &buffer[0], &buffer[1]);
+        data[*elementsNum].movieID = buffer[0];
+        data[*elementsNum].rate = buffer[1];
+        (*elementsNum)++;
     }
     fclose(fptr);
 }
@@ -62,7 +56,7 @@ void calAvgRatingPoint(filmSurvey *data, int *counter, float *avgPoint, int *ele
         avgPoint[data[i].movieID] += data[i].rate;
     }
 
-    for (int i=0; i<NUM_MOVIES; i++){
+    for (int i=0; i<*elementsNum; i++){
         if (counter[i] != 0){
             avgPoint[i] /= counter[i];
         }
@@ -81,8 +75,8 @@ int main (int argc, char *argv[]){
     int shmid1 = shmget(SHM_KEY1, sizeof(ratingPoint), 0644|IPC_CREAT);
     int shmid2 = shmget(SHM_KEY2, sizeof(int), 0644|IPC_CREAT);
 
-    ratingPoint *storageSHM = (ratingPoint*)shmat(shmid1, 0, 0);
-    int *elementsNum = (int*)shmat(shmid2, 0, 0);
+    ratingPoint *storageSHM = (ratingPoint*)shmat(shmid1, NULL, 0);
+    int *elementsNum = (int*)shmat(shmid2, NULL, 0);
 
     if (storageSHM == (ratingPoint*)-1){
         perror("shmat");
@@ -105,44 +99,28 @@ int main (int argc, char *argv[]){
     pid_t pid2 = 1;
 
     if (pid1 == 0){ //child1 process
-        readFile(filename1, &data1[0], elementsNum);
-        calAvgRatingPoint(&data1[0], &(storageSHM->counter[0]), &(storageSHM->avgPoint[0]), elementsNum);
+        readFile(filename1, &data1, elementsNum);
+        calAvgRatingPoint(&data1, &(storageSHM->counter), &(storageSHM->avgPoint), elementsNum);
     }
     else{
+        int status1;
+        pid1 = wait(&status1);
+        
         pid2 = fork();
         if (pid2 == 0){//child2 process
-            readFile(filename2, &data2[0], elementsNum);
-            calAvgRatingPoint(&data2[0], &(storageSHM->counter[0]), &(storageSHM->avgPoint[0]), elementsNum);
+            readFile(filename2, &data2, elementsNum);
+            calAvgRatingPoint(&data2, &(storageSHM->counter), &(storageSHM->avgPoint), elementsNum);
         }
         else{ //parent process
-            for (int i = 1; i<=NUM_MOVIES; i++){
+            int status2;
+            pid2 = wait(&status2);
+            
+            for (int i=0; i<NUM_MOVIES; i++){
                 if (storageSHM->counter[i] != 0){
-                    printf("ID:%d   Average Point:%f   Counter:%d\n", i, storageSHM->avgPoint[i], storageSHM->counter[i]);
+                    printf("ID:%d   Average Point:%.2f   Counter:%d\n", i, storageSHM->avgPoint[i], storageSHM->counter[i]);
                 }
             }
         }
-    }
-
-    // detach from the shared memory
-    if (shmdt(storageSHM) == -1){
-        perror("shmdt");
-        return 1;
-    }
-
-    if (shmdt(elementsNum) == -1){
-        perror("shmdt");
-        return 1;
-    }
-
-    // mark the shared memory to be destroyed
-    if (shmctl(shmid1, IPC_RMID, 0) == -1){
-        perror("shmctl");
-        return 1;
-    }
-
-    if (shmctl(shmid2, IPC_RMID, 0) == -1){
-        perror("schmctl");
-        return 1;
     }
     return 0;
 }
