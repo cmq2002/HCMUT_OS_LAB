@@ -86,4 +86,5 @@ int main (int argc, char* argv[]){
             WRITE_TO_PARENT();
         // }
     }
+    return 0;
 }
